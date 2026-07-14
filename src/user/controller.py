@@ -1,11 +1,12 @@
 from src.user.dtos import userSchema, loginSchema
 from sqlalchemy.orm import Session
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, Request
 from src.user.models import userModel
 from pwdlib import PasswordHash
 from src.utils.settings import settings
 from datetime import datetime, timedelta
 import jwt
+from jwt.exceptions import InvalidTokenError
 
 password_hash = PasswordHash.recommended()
 #make password to the hash password
@@ -57,3 +58,36 @@ def login_user(body: loginSchema, db:Session):
                              ## exp -> it expire the token after some time aslo it the main reason that the token keeps changing after some time, so that the user can not use the same token again and again, it will expire after some time
 
     return {"token": token}
+
+#token based authentication
+def is_authentication(request:Request, db:Session):
+     try:
+        token = request.headers.get("Authorization") #header is the dictionary consist of other keys with authorization
+
+        if not token:
+            raise HTTPException(status_code = status.HTTP_401_UNAUTHORIZED, detail = "Token is missing")
+        
+        token = token.split(" ")[-1]
+        data = jwt.decode(token, settings.SECRET_KEY, algorithms = settings.ALGORITHM) #decode the token, if the token is valid it will return the data else it will throw an error
+
+        print(data)
+        #the data printed will be like this {'_id': 1, 'username': 'test', 'exp': 1700000000} -> exp is the time when the token will expire
+        #we need to check 
+            #1. if id is present in the database or not
+            #2. if the username is present in the database or not
+            #3. if the expiry time has passed the current time or not 
+        user_id = data.get("_id")
+        exp_time = data.get("exp")
+
+        current_time = datetime.now().timestamp()
+        if current_time > exp_time:
+            raise HTTPException(status_code = status.HTTP_401_UNAUTHORIZED, detail = "Token has expired")
+        
+        user = db.query(userModel).filter(userModel.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code = status.HTTP_401_UNAUTHORIZED, detail = "User does not exist")
+
+        return user
+     
+     except InvalidTokenError:
+        raise HTTPException(status_code = status.HTTP_401_UNAUTHORIZED, detail = "Invalid token")
